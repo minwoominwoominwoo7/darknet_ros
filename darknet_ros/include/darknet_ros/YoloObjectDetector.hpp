@@ -128,6 +128,7 @@ class YoloObjectDetector
    * @return true if successful.
    */
   bool publishDetectionImage(const cv::Mat& detectionImage);
+  bool publishLabelImage(const cv::Mat& labelImage);
 
   //! Typedefs.
   typedef actionlib::SimpleActionServer<darknet_ros_msgs::CheckForObjectsAction> CheckForObjectsActionServer;
@@ -162,6 +163,9 @@ class YoloObjectDetector
 
   //! Publisher of the bounding box image.
   ros::Publisher detectionImagePublisher_;
+
+  //! Publisher of the label image.
+  ros::Publisher labelImagePublisher_;
 
   // Yolo running on thread.
   std::thread yoloThread_;

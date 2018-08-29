@@ -138,6 +138,9 @@ void YoloObjectDetector::init()
   std::string detectionImageTopicName;
   int detectionImageQueueSize;
   bool detectionImageLatch;
+  std::string labelImageTopicName;
+  int labelImageQueueSize;
+  bool labelImageLatch;
 
   nodeHandle_.param("subscribers/camera_reading/topic", cameraTopicName,
                     std::string("/camera/image_raw"));
@@ -154,6 +157,10 @@ void YoloObjectDetector::init()
                     std::string("detection_image"));
   nodeHandle_.param("publishers/detection_image/queue_size", detectionImageQueueSize, 1);
   nodeHandle_.param("publishers/detection_image/latch", detectionImageLatch, true);
+  nodeHandle_.param("publishers/label_image/topic", labelImageTopicName,
+                    std::string("label_image"));
+  nodeHandle_.param("publishers/label_image/queue_size", labelImageQueueSize, 1);
+  nodeHandle_.param("publishers/label_image/latch", labelImageLatch, true);
 
   imageSubscriber_ = imageTransport_.subscribe(cameraTopicName, cameraQueueSize,
                                                &YoloObjectDetector::cameraCallback, this);
@@ -165,6 +172,9 @@ void YoloObjectDetector::init()
   detectionImagePublisher_ = nodeHandle_.advertise<sensor_msgs::Image>(detectionImageTopicName,
                                                                        detectionImageQueueSize,
                                                                        detectionImageLatch);
+  labelImagePublisher_ = nodeHandle_.advertise<sensor_msgs::Image>(labelImageTopicName,
+								   labelImageQueueSize,
+								   labelImageLatch);
 
   // Action servers.
   std::string checkForObjectsActionName;
@@ -270,6 +280,20 @@ bool YoloObjectDetector::publishDetectionImage(const cv::Mat& detectionImage)
   return true;
 }
 
+bool YoloObjectDetector::publishLabelImage(const cv::Mat& labelImage)
+{
+  if (labelImagePublisher_.getNumSubscribers() < 1)
+    return false;
+  cv_bridge::CvImage cvImage;
+  cvImage.header.stamp = ros::Time::now();
+  cvImage.header.frame_id = "detection_image";
+  cvImage.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
+  cvImage.image = labelImage;
+  labelImagePublisher_.publish(*cvImage.toImageMsg());
+  ROS_DEBUG("Label image has been published.");
+  return true;
+}
+
 // double YoloObjectDetector::getWallTime()
 // {
 //   struct timeval time;
@@ -347,6 +371,8 @@ void *YoloObjectDetector::detectInThread()
     printf("Objects:\n\n");
   }
   image display = buff_[(buffIndex_+2) % 3];
+  cv::Mat label_im(display.h, display.w, CV_32SC1, cv::Scalar::all(0));
+
   draw_detections(display, dets, nboxes, demoThresh_, demoNames_, demoAlphabet_, demoClasses_);
 
   // extract the bounding boxes and send them to ROS
@@ -378,6 +404,12 @@ void *YoloObjectDetector::detectInThread()
         // define bounding box
         // BoundingBox must be 1% size of frame (3.2x2.4 pixels)
         if (BoundingBox_width > 0.01 && BoundingBox_height > 0.01) {
+	  // set label image
+	  cv::rectangle(label_im,
+                        cv::Point(xmin*label_im.cols,ymin*label_im.rows),
+                        cv::Point(xmax*label_im.cols,ymax*label_im.rows),
+                        cv::Scalar::all(i), CV_FILLED);
+
           roiBoxes_[count].x = x_center;
           roiBoxes_[count].y = y_center;
           roiBoxes_[count].w = BoundingBox_width;
@@ -390,6 +422,10 @@ void *YoloObjectDetector::detectInThread()
     }
   }
 
+ if (!publishLabelImage(label_im)) {
+    ROS_DEBUG("Label image has not been broadcasted.");
+  }
+
   // create array to store found bounding boxes
   // if no object detected, make sure that ROS knows that num = 0
   if (count == 0) {
@@ -398,6 +434,7 @@ void *YoloObjectDetector::detectInThread()
     roiBoxes_[0].num = count;
   }
 
+  label_im.release();
   free_detections(dets, nboxes);
   demoIndex_ = (demoIndex_ + 1) % demoFrame_;
   running_ = 0;
