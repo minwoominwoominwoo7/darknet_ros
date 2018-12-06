@@ -408,7 +408,8 @@ void *YoloObjectDetector::detectInThread()
 	  cv::rectangle(label_im,
                         cv::Point(xmin*label_im.cols,ymin*label_im.rows),
                         cv::Point(xmax*label_im.cols,ymax*label_im.rows),
-                        cv::Scalar::all(i), CV_FILLED);
+                        cv::Scalar::all(j+1), CV_FILLED);
+	  // label using (class number + 1) to reserve 0 for background
 
           roiBoxes_[count].x = x_center;
           roiBoxes_[count].y = y_center;
