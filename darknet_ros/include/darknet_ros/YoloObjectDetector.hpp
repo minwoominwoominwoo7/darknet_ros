@@ -106,6 +106,7 @@ class YoloObjectDetector
    * @param[in] msg image pointer.
    */
   void cameraCallback(const sensor_msgs::ImageConstPtr& msg);
+  void cameraCallback2(const sensor_msgs::ImageConstPtr& msg);
 
   /*!
    * Check for objects action goal callback.
@@ -146,9 +147,11 @@ class YoloObjectDetector
 
   //! Advertise and subscribe to image topics.
   image_transport::ImageTransport imageTransport_;
+  image_transport::ImageTransport imageTransport2_;
 
   //! ROS subscriber and publisher.
   image_transport::Subscriber imageSubscriber_;
+  image_transport::Subscriber imageSubscriber2_;
   ros::Publisher objectPublisher_;
   ros::Publisher boundingBoxesPublisher_;
 
@@ -160,6 +163,8 @@ class YoloObjectDetector
   //! Camera related parameters.
   int frameWidth_;
   int frameHeight_;
+  int frameWidthDepth_;
+  int frameHeightDepth_;
 
   //! Publisher of the bounding box image.
   ros::Publisher detectionImagePublisher_;
@@ -207,6 +212,7 @@ class YoloObjectDetector
 
   std_msgs::Header imageHeader_;
   cv::Mat camImageCopy_;
+  cv::Mat DepthImageCopy_;
   boost::shared_mutex mutexImageCallback_;
 
   bool imageStatus_ = false;
@@ -250,6 +256,12 @@ class YoloObjectDetector
   bool isNodeRunning(void);
 
   void *publishInThread();
+  
+  double tmpCenX;
+  double tmpCenY;
+  double tmpDepthZ;
+  bool use_platform;
+
 };
 
 } /* namespace darknet_ros*/

@@ -15,8 +15,12 @@
 #ifdef DARKNET_FILE_PATH
 std::string darknetFilePath_ = DARKNET_FILE_PATH;
 #else
-#error Path of darknet repository is not defined in CMakeLists.txt.
+#error Path of darknet re pository is not defined in CMakeLists.txt.
 #endif
+
+#include <mutex>
+
+std::mutex mtx_lock;
 
 namespace darknet_ros {
 
@@ -28,6 +32,7 @@ char **detectionNames;
 YoloObjectDetector::YoloObjectDetector(ros::NodeHandle nh)
     : nodeHandle_(nh),
       imageTransport_(nodeHandle_),
+      imageTransport2_(nodeHandle_),
       numClasses_(0),
       classLabels_(0),
       rosBoxes_(0),
@@ -91,12 +96,14 @@ void YoloObjectDetector::init()
 
   // Threshold of object detection.
   float thresh;
+
   nodeHandle_.param("yolo_model/threshold/value", thresh, (float) 0.3);
 
   // Path to weights file.
   nodeHandle_.param("yolo_model/weight_file/name", weightsModel,
                     std::string("yolov2-tiny.weights"));
   nodeHandle_.param("weights_path", weightsPath, std::string("/default"));
+  nodeHandle_.param("use_platform", use_platform, true);
   weightsPath += "/" + weightsModel;
   weights = new char[weightsPath.length() + 1];
   strcpy(weights, weightsPath.c_str());
@@ -164,6 +171,20 @@ void YoloObjectDetector::init()
 
   imageSubscriber_ = imageTransport_.subscribe(cameraTopicName, cameraQueueSize,
                                                &YoloObjectDetector::cameraCallback, this);
+
+  /*imageSubscriber2_ = imageTransport2_.subscribe("/camera/depth/image_rect_raw", cameraQueueSize,
+                                               &YoloObjectDetector::cameraCallback2, this);*/
+
+  if(use_platform){
+  	imageSubscriber2_ = imageTransport2_.subscribe("/camera/aligned_depth_to_color/image_raw", cameraQueueSize,
+                                                        &YoloObjectDetector::cameraCallback2, this);
+  }else{
+  	/*imageSubscriber2_ = imageTransport2_.subscribe("/camera/depth/image_rect_raw", cameraQueueSize,
+                                                        &YoloObjectDetector::cameraCallback2, this);*/
+  	imageSubscriber2_ = imageTransport2_.subscribe("/camera/aligned_depth_to_color/image_raw", cameraQueueSize,
+                                                        &YoloObjectDetector::cameraCallback2, this);
+  }
+
   objectPublisher_ = nodeHandle_.advertise<std_msgs::Int8>(objectDetectorTopicName,
                                                            objectDetectorQueueSize,
                                                            objectDetectorLatch);
@@ -215,6 +236,43 @@ void YoloObjectDetector::cameraCallback(const sensor_msgs::ImageConstPtr& msg)
     frameWidth_ = cam_image->image.size().width;
     frameHeight_ = cam_image->image.size().height;
   }
+  return;
+}
+
+void YoloObjectDetector::cameraCallback2(const sensor_msgs::ImageConstPtr& msg)
+{ 
+      //printf("cameraCallback2 \n");
+      cv_bridge::CvImagePtr cv_ptr;
+      cv_bridge::CvImageConstPtr cam_depth;
+
+      if( use_platform ){
+           cam_depth = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_16UC1);
+      }
+      else{
+           cam_depth = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_32FC1);
+      }
+
+      //mtx_lock.lock();
+      DepthImageCopy_ = cam_depth->image.clone();
+      frameWidthDepth_ = cam_depth->image.size().width;
+      frameHeightDepth_ = cam_depth->image.size().height;
+      //zdepth = (float)DepthImageCopy_.at<float>(ycent, xcent);
+
+      double distance = 0.0;
+      double xr = tmpCenX;
+      double yr = tmpCenY;
+      if( xr < frameWidthDepth_ &&  yr < frameHeightDepth_ ){
+          if( use_platform ){
+              tmpDepthZ = 0.001*cam_depth->image.at<u_int16_t>(yr, xr);
+          }else{
+              tmpDepthZ=(float)cam_depth->image.at<float>(yr,xr);
+          }
+      }else{
+          tmpDepthZ = -1 ;
+      }
+
+      printf("x,y( %.0f, %.0f ) ,z ( %.3f ) \n" , tmpCenX, tmpCenY, tmpDepthZ);
+
   return;
 }
 
@@ -365,10 +423,10 @@ void *YoloObjectDetector::detectInThread()
   if (nms > 0) do_nms_obj(dets, nboxes, l.classes, nms);
 
   if (enableConsoleOutput_) {
-    printf("\033[2J");
+    /*printf("\033[2J");
     printf("\033[1;1H");
     printf("\nFPS:%.1f\n",fps_);
-    printf("Objects:\n\n");
+    printf("Objects:\n\n");*/
   }
   image display = buff_[(buffIndex_+2) % 3];
   cv::Mat label_im(display.h, display.w, CV_32SC1, cv::Scalar::all(0));
@@ -395,6 +453,14 @@ void *YoloObjectDetector::detectInThread()
 
     // iterate through possible boxes and collect the bounding boxes
     for (j = 0; j < demoClasses_; ++j) {
+	if ( (strcmp( "wine glass",demoNames_[j]) != 0)  && (strcmp( "cup",demoNames_[j]) != 0 )) {
+           continue;
+	}
+
+      if( tmpDepthZ == 0 ){
+           //continue;
+      }
+
       if (dets[i].prob[j]) {
         float x_center = (xmin + xmax) / 2;
         float y_center = (ymin + ymax) / 2;
@@ -405,9 +471,13 @@ void *YoloObjectDetector::detectInThread()
         // BoundingBox must be 1% size of frame (3.2x2.4 pixels)
         if (BoundingBox_width > 0.01 && BoundingBox_height > 0.01) {
 	  // set label image
+	  int tmpWidth = xmax -xmin;
+	  int tmpHeight = ymax -ymin;
 	  cv::rectangle(label_im,
-                        cv::Point(xmin*label_im.cols,ymin*label_im.rows),
-                        cv::Point(xmax*label_im.cols,ymax*label_im.rows),
+                        //cv::Point((xmin)*label_im.cols,(ymin)*label_im.rows),
+                        //cv::Point((xmax)*label_im.cols,(ymax)*label_im.rows),
+                        cv::Point((x_center-tmpWidth/5)*label_im.cols,(y_center-tmpHeight/5)*label_im.rows),
+                        cv::Point((x_center+tmpWidth/5)*label_im.cols,(y_center+tmpHeight/5)*label_im.rows),
                         cv::Scalar::all(j+1), CV_FILLED);
 	  // label using (class number + 1) to reserve 0 for background
 
@@ -459,6 +529,7 @@ void *YoloObjectDetector::fetchInThread()
 
 void *YoloObjectDetector::displayInThread(void *ptr)
 {
+  
   show_image_cv(buff_[(buffIndex_ + 1)%3], "YOLO V3", ipl_);
   int c = cvWaitKey(waitKeyDelay_);
   if (c != -1) c = c%256;
@@ -647,12 +718,21 @@ void *YoloObjectDetector::publishInThread()
           int xmax = (rosBoxes_[i][j].x + rosBoxes_[i][j].w / 2) * frameWidth_;
           int ymax = (rosBoxes_[i][j].y + rosBoxes_[i][j].h / 2) * frameHeight_;
 
+          double xcent = (double)round(( xmin + xmax )/ 2 );
+          tmpCenX = xcent ;
+          double ycent = (double)round(( ymin + ymax )/ 2 );
+          tmpCenY = ycent ;
+          double zdepth = tmpDepthZ ;
+
           boundingBox.Class = classLabels_[i];
           boundingBox.probability = rosBoxes_[i][j].prob;
           boundingBox.xmin = xmin;
           boundingBox.ymin = ymin;
           boundingBox.xmax = xmax;
           boundingBox.ymax = ymax;
+          boundingBox.X = xcent;
+          boundingBox.Y = ycent;
+	  boundingBox.Z = zdepth;
           boundingBoxesResults_.bounding_boxes.push_back(boundingBox);
         }
       }
